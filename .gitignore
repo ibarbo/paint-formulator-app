@@ -1,0 +1,28 @@
+# Directorios de entornos virtuales
+env/
+venv/
+.venv/
+
+# Archivos de caché y compilación de Python
+__pycache__/
+*.pyc
+*.pyd
+*.egg-info/
+.pytest_cache/
+
+# Archivos específicos de entornos de desarrollo (IDE)
+.vscode/
+.idea/
+*.swp
+
+# Datos generados o grandes archivos de datos
+#formulaciones_pintura_simuladas.csv
+
+# Archivos de sistema operativo (macOS)
+.DS_Store
+
+# Archivos de registro
+*.log
+
+# Modelos entrenados
+trained_models/
