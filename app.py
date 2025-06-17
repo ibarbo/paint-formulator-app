@@ -4,35 +4,62 @@ import numpy as np
 import joblib
 import os
 import sys
-from huggingface_hub import hf_hub_download # Importa esta línea
-import requests # Necesario para la función de descarga robusta si la requieres, aunque hf_hub_download es la principal aquí
+from huggingface_hub import hf_hub_download # Importa la función para descargar archivos de Hugging Face Hub
+import requests # Mantenida por si acaso se requiriera para futuras funcionalidades de descarga robusta, aunque hf_hub_download es la principal aquí.
 
-# --- Configuración de Hugging Face Hub ---
+# --- Configuración del Repositorio de Hugging Face Hub ---
 HF_REPO_ID = "ibarbo/paint-prediction-models" 
 
-# Ajustar el path para cargar los módulos personalizados
+# Ajusta el path del sistema para asegurar que los módulos personalizados
+# (como 'ml_paint_models.py' si estuvieran en una carpeta superior) sean accesibles.
 current_dir = os.path.dirname(__file__)
 parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir))
 sys.path.append(parent_dir)
 
-# --- Configuración de la Página ---
+# --- Configuración General de la Página de Streamlit ---
 st.set_page_config(
-    page_title="Sistema de Predicción de Calidad de Pinturas", # Nombre de página genérico
-    page_icon="🎨",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    page_title="Sistema de Predicción de Calidad de Pinturas", # Título visible en la pestaña del navegador
+    page_icon="🎨", # Icono de la pestaña del navegador
+    layout="wide", # Usa un diseño ancho para la aplicación
+    initial_sidebar_state="expanded" # Expande la barra lateral por defecto
 )
 
-# --- Carga de Modelos y Preprocesadores ---
-@st.cache_resource # Usar st.cache_resource para objetos de ML (modelos, encoders)
+# --- Carga de Modelos y Preprocesadores de Machine Learning ---
+@st.cache_resource # Decorador de Streamlit para cachear objetos pesados como modelos ML y preprocesadores.
 def load_ml_assets():
-    models_dir = 'trained_models' # Carpeta donde se guardarán temporalmente tus modelos
+    """
+    Carga todos los modelos de Machine Learning y preprocesadores necesarios para la aplicación.
     
-    # Asegúrate de que la carpeta 'trained_models' exista
-    os.makedirs(models_dir, exist_ok=True)
+    Los archivos son descargados desde un repositorio de Hugging Face Hub a una carpeta local
+    ('trained_models') si no existen previamente, y luego cargados en memoria.
+    Esta función se ejecuta una sola vez gracias a `@st.cache_resource`, optimizando el rendimiento.
+
+    Returns:
+        tuple: Contiene todos los objetos ML cargados y las configuraciones de los inputs.
+            - preprocessor_full (ColumnTransformer): Objeto para preprocesar las características de entrada.
+            - model_features (list): Lista de los nombres de las características transformadas.
+            - classifier_estado (RandomForestClassifier): Modelo para predecir el estado final (Éxito/Falla).
+            - input_ranges (dict): Diccionario con los rangos (min, max, default, step, format) para los inputs numéricos.
+            - paint_types_options (tuple): Opciones de tipo de pintura para el selectbox.
+            - suppliers_options (tuple): Opciones de proveedor para el selectbox.
+            - regressor_fregado (RandomForestRegressor): Modelo para Resistencia al Fregado.
+            - regressor_viscosidad (RandomForestRegressor): Modelo para Viscosidad Final.
+            - regressor_cubriente (RandomForestRegressor): Modelo para Poder Cubriente.
+            - regressor_brillo (RandomForestRegressor): Modelo para Brillo.
+            - regressor_estabilidad (RandomForestRegressor): Modelo para Estabilidad.
+            - regressor_l (RandomForestRegressor): Modelo para el componente de color L.
+            - regressor_a (RandomForestRegressor): Modelo para el componente de color a.
+            - regressor_b (RandomForestRegressor): Modelo para el componente de color b.
     
-    # Lista de los nombres de archivo PKL que necesitas descargar de Hugging Face Hub
-    # Estos nombres deben coincidir EXACTAMENTE con los nombres que subiste a HF
+    Raises:
+        st.stop: Detiene la ejecución de la aplicación si los modelos no pueden ser
+                 descargados o cargados, indicando un error crítico.
+    """
+    models_dir = 'trained_models' # Define la carpeta local para almacenar temporalmente los modelos
+    os.makedirs(models_dir, exist_ok=True) # Crea la carpeta si no existe
+
+    # Lista de los nombres de archivo PKL a descargar desde Hugging Face Hub.
+    # Es crucial que estos nombres coincidan EXACTAMENTE con los archivos subidos al repositorio HF.
     model_files = [
         'preprocessor_full.pkl',
         'model_features.pkl',
@@ -45,12 +72,13 @@ def load_ml_assets():
         'random_forest_regressor_L.pkl',
         'random_forest_regressor_a.pkl',
         'random_forest_regressor_b.pkl',
-        # Si tienes 'label_encoder_estado_final.pkl' y lo usas, descomenta o añade aquí:
+        # Si se utiliza un 'label_encoder_estado_final.pkl' para decodificar etiquetas,
+        # descomentar o añadir aquí su nombre:
         # 'label_encoder_estado_final.pkl',
     ]
 
     try:
-        # Descargar cada archivo si no existe localmente
+        # Itera sobre la lista de archivos para descargarlos si no están ya presentes localmente
         for filename in model_files:
             local_filepath = os.path.join(models_dir, filename)
             if not os.path.exists(local_filepath):
@@ -60,26 +88,27 @@ def load_ml_assets():
                             repo_id=HF_REPO_ID,
                             filename=filename,
                             local_dir=models_dir,
-                            local_dir_use_symlinks=False # Importante para asegurar que se descargue el archivo real
+                            local_dir_use_symlinks=False # Asegura que se descargue el archivo real, no un enlace simbólico
                         )
-                        print(f"[INFO] ✔️ {filename} descargado.")
+                        print(f"✔️ Archivo '{filename}' descargado exitosamente.")
                     except Exception as e:
                         st.error(f"❌ Error crítico: No se pudo descargar '{filename}' desde Hugging Face Hub. "
-                                 f"Por favor, verifica que 'HF_REPO_ID' sea correcto ({HF_REPO_ID}), "
+                                 f"Por favor, verifica que el 'HF_REPO_ID' sea correcto ({HF_REPO_ID}), "
                                  f"que el nombre del archivo en HF sea '{filename}', "
                                  f"y que el repositorio sea público. Detalle: {e}")
-                        st.stop() # Detiene la app si no se puede descargar
+                        st.stop() # Detiene la aplicación si la descarga falla
+            # Si el archivo ya existe, no se hace nada, se cargará desde el disco.
 
-        # Una vez que todos los archivos están en 'models_dir' (ya sea descargados o ya existían), procede a cargarlos
+        # Una vez que todos los archivos están en 'models_dir' (ya sea por descarga o porque ya existían), se procede a cargarlos en memoria.
         preprocessor_full = joblib.load(os.path.join(models_dir, 'preprocessor_full.pkl'))
         
-        # Cargar los nombres de las características finales (ColumnTransformer output features)
+        # Cargar los nombres de las características generadas por el ColumnTransformer (preprocesador).
         model_features = joblib.load(os.path.join(models_dir, 'model_features.pkl'))
         
-        # Cargar el clasificador
+        # Cargar el clasificador entrenado para predecir el estado de la pintura.
         classifier_estado = joblib.load(os.path.join(models_dir, 'random_forest_classifier_estado.pkl'))
         
-        # Cargar todos los regresores
+        # Cargar todos los modelos de regresión para las diferentes propiedades de la pintura.
         regressor_fregado = joblib.load(os.path.join(models_dir, 'random_forest_regressor_Resistencia_al_Fregado_Ciclos.pkl'))
         regressor_viscosidad = joblib.load(os.path.join(models_dir, 'random_forest_regressor_Viscosidad_Final_KU.pkl'))
         regressor_cubriente = joblib.load(os.path.join(models_dir, 'random_forest_regressor_Poder_Cubriente_m2_L.pkl'))
@@ -89,7 +118,8 @@ def load_ml_assets():
         regressor_a = joblib.load(os.path.join(models_dir, 'random_forest_regressor_a.pkl'))
         regressor_b = joblib.load(os.path.join(models_dir, 'random_forest_regressor_b.pkl'))
 
-        # Diccionario con los rangos mínimos y máximos para cada input numérico
+        # Define los rangos mínimos, máximos, valores por defecto, pasos y formato para cada input numérico
+        # Esto asegura que los controles deslizantes o campos de entrada en la UI estén correctamente configurados.
         input_ranges = {
             'Pigmento Blanco (TiO2)': {'min': 200.00, 'max': 600.00, 'default': 400.00, 'step': 0.01, 'format': "%.2f"},
             'Extender (CaCO3)': {'min': 50.00, 'max': 400.00, 'default': 200.00, 'step': 0.01, 'format': "%.2f"},
@@ -101,7 +131,7 @@ def load_ml_assets():
             'Agua': {'min': 20.00, 'max': 350.00, 'default': 150.00, 'step': 0.01, 'format': "%.2f"}
         }
 
-        # Opciones para selectbox (deben coincidir con las usadas en el entrenamiento)
+        # Define las opciones para los campos selectbox, asegurando consistencia con los datos de entrenamiento.
         paint_types_options = ('Mate', 'Satinado', 'Brillante')
         suppliers_options = ('Proveedor A', 'Proveedor B', 'Proveedor C', 'Proveedor D') 
 
@@ -111,25 +141,28 @@ def load_ml_assets():
                 regressor_estabilidad, regressor_l, regressor_a, regressor_b)
     
     except FileNotFoundError as e:
-        # Este error ahora debería ser raro si la descarga funciona
+        # Manejo de errores si un archivo modelo no se encuentra localmente después de intentar la descarga.
         st.error(f"Error al cargar los modelos o preprocesadores localmente. Archivo no encontrado: {e.filename}")
         st.error("Asegúrate de que los archivos se hayan descargado correctamente o que los nombres en la lista 'model_files' sean correctos.")
-        st.stop() # Detiene la ejecución de la app si los modelos no están disponibles
+        st.stop() # Detiene la ejecución de la aplicación si los modelos críticos no están disponibles
     except Exception as e:
+        # Manejo de cualquier otro error inesperado durante la carga de los activos.
         st.error(f"Ocurrió un error inesperado al cargar los activos del modelo: {e}")
         st.stop()
 
-# Cargar todos los activos ML
+# Llama a la función para cargar todos los activos de Machine Learning al inicio de la aplicación.
+# Los resultados se cachean automáticamente.
 (preprocessor_full, model_features, classifier_estado, input_ranges, 
  paint_types_options, suppliers_options, regressor_fregado, 
  regressor_viscosidad, regressor_cubriente, regressor_brillo, 
  regressor_estabilidad, regressor_l, regressor_a, regressor_b) = load_ml_assets()
 
-# --- Título y Descripción de la Aplicación ---
-st.title("🎨 Sistema de Predicción de Calidad de Pinturas") # Título genérico
-st.markdown("Bienvenido. Aquí puedes ingresar los componentes de una formulación de pintura y predecir sus propiedades clave y su estado final.") # Descripción genérica
+# --- Título y Descripción Principal de la Aplicación ---
+st.title("🎨 Sistema de Predicción de Calidad de Pinturas") 
+st.markdown("Bienvenido. Aquí puedes ingresar los componentes de una formulación de pintura y predecir sus propiedades clave y su estado final.")
 
-# --- Expander de "Lo que puedo/no puedo hacer" ---
+# --- Expander de Información "Qué puedo/no puedo hacer" ---
+# Proporciona una guía clara al usuario sobre las capacidades de la herramienta.
 with st.expander("🤔 ¿Qué puedo/no puedo hacer aquí?"):
     st.markdown("""
     Esta herramienta te permite:
@@ -144,20 +177,21 @@ with st.expander("🤔 ¿Qué puedo/no puedo hacer aquí?"):
     * Proporcionar datos de formulaciones no simuladas (la base de datos es de ejemplos simulados).
     """)
 
-st.markdown("---")
+st.markdown("---") # Separador visual en la UI
 
-# --- Interfaz de Usuario para Ingreso de Datos ---
+# --- Sección de Interfaz de Usuario para Ingreso de Datos ---
 st.header("🧪 Componentes de la Formulación")
 st.markdown("Ajusta los valores de cada componente en **unidades de 'partes' o gramos por lote/litro**, tal como se usaron para entrenar el modelo.")
 st.markdown("Los valores de entrada se **redondean automáticamente a dos decimales** para su procesamiento.")
 
+# Divide los inputs en dos columnas para una mejor organización visual de la interfaz.
 col1, col2 = st.columns(2)
 
 with col1:
     tipo_pintura_input = st.selectbox(
         "Tipo de Pintura",
         paint_types_options,
-        index=0 # Default a Mate
+        index=0 # Establece "Mate" como la opción predeterminada
     )
     pigmento_blanco_tio2_input = st.number_input(
         "Pigmento Blanco (TiO2)", 
@@ -228,15 +262,18 @@ with col2:
     proveedor_pigmento_blanco_input = st.selectbox(
         "Proveedor Pigmento Blanco",
         suppliers_options,
-        index=0 # Default a Proveedor A
+        index=0 # Establece "Proveedor A" como la opción predeterminada
     )
 
-st.markdown("---")
+st.markdown("---") # Separador visual
 
-# Botón de Predicción
+# --- Botón de Predicción ---
+# Este bloque de código se ejecuta solo cuando el usuario hace clic en el botón.
 if st.button("🚀 Predecir Propiedades y Estado", use_container_width=True, type="primary"):
-    # Crear DataFrame con los inputs del usuario (DEBE COINCIDIR CON EL ORDEN Y NOMBRES DEL ENTRENAMIENTO)
-    # Las columnas deben estar en el orden en que el ColumnTransformer espera verlas
+    # Crea un DataFrame de Pandas con los valores ingresados por el usuario.
+    # ES CRÍTICO que los nombres de las columnas y su ORDEN coincidan EXACTAMENTE
+    # con los nombres y el orden de las características de entrada utilizadas
+    # durante el entrenamiento del modelo y la configuración del ColumnTransformer.
     input_data = pd.DataFrame({
         'Pigmento Blanco (TiO2)': [pigmento_blanco_tio2_input],
         'Extender (CaCO3)': [extender_caco3_input],
@@ -250,7 +287,10 @@ if st.button("🚀 Predecir Propiedades y Estado", use_container_width=True, typ
         'Proveedor Pigmento Blanco': [proveedor_pigmento_blanco_input]
     })
 
-    # --- Ingeniería de Características (DEBE COINCIDIR CON ML_PAINT_MODELS.PY) ---
+    # --- Ingeniería de Características Adicionales ---
+    # Crea características derivadas (features engineering) que fueron importantes para el modelo.
+    # Estas operaciones DEBEN COINCIDIR EXACTAMENTE con las realizadas en el script de entrenamiento
+    # (ej. 'ml_paint_models.py').
     input_data['Relacion_TiO2_Ligante'] = input_data['Pigmento Blanco (TiO2)'] / input_data['Ligante (Resina Acrílica)']
     input_data['Porcentaje_Solidos_Totales_Formula'] = (
         input_data['Pigmento Blanco (TiO2)'] + input_data['Extender (CaCO3)'] +
@@ -258,14 +298,19 @@ if st.button("🚀 Predecir Propiedades y Estado", use_container_width=True, typ
         input_data['Dispersante'] + input_data['Otros Aditivos']
     )
     
-    # --- Preprocesamiento (Aplicar el preprocesador completo) ---
+    # --- Preprocesamiento de los Datos de Entrada ---
     with st.spinner("Preprocesando datos..."):
+        # Aplica el preprocesador completo (que incluye escalado, codificación, etc.)
+        # a los datos de entrada del usuario.
         input_processed = preprocessor_full.transform(input_data)
+        # Convierte el array NumPy resultante del preprocesamiento de nuevo a un DataFrame
+        # usando los nombres de características finales que el modelo espera.
         input_for_prediction = pd.DataFrame(input_processed, columns=model_features)
 
-    # --- Realizar Predicciones ---
+    # --- Realizar Predicciones con los Modelos Entrenados ---
     with st.spinner("Calculando predicciones..."):
-        # Predicción de propiedades de regresión
+        # Realiza predicciones utilizando cada modelo de regresión cargado.
+        # [0] se usa para extraer el valor escalar de la predicción (ya que .predict() retorna un array).
         pred_fregado = regressor_fregado.predict(input_for_prediction)[0]
         pred_viscosidad = regressor_viscosidad.predict(input_for_prediction)[0]
         pred_cubriente = regressor_cubriente.predict(input_for_prediction)[0]
@@ -275,45 +320,49 @@ if st.button("🚀 Predecir Propiedades y Estado", use_container_width=True, typ
         pred_a = regressor_a.predict(input_for_prediction)[0]
         pred_b = regressor_b.predict(input_for_prediction)[0]
 
-        # Predicción del estado final
-        # Si el clasificador predice etiquetas codificadas y necesitas decodificarlas, necesitarías cargar 'label_encoder_estado_final.pkl'
-        # Por ahora, asumo que 'Éxito' o 'Falla' ya son las salidas del clasificador si lo entrenaste así.
+        # Realiza la predicción del estado final utilizando el modelo clasificador.
+        # Se asume que el clasificador predice directamente las etiquetas 'Éxito' o 'Falla'
+        # Si el clasificador predijera valores numéricos (ej. 0 o 1), se necesitaría
+        # un LabelEncoder para decodificarlos de nuevo a texto.
         pred_estado_encoded = classifier_estado.predict(input_for_prediction)[0]
         predicted_estado_final = pred_estado_encoded 
 
+    # --- Sección de Visualización de Resultados ---
     st.subheader("📊 Resultados de la Predicción")
     st.markdown("---")
 
+    # Muestra los resultados de las predicciones en un formato de tres columnas para mayor claridad.
     col_res1, col_res2, col_res3 = st.columns(3)
 
     with col_res1:
         st.metric(label="Resistencia al Fregado", value=f"{pred_fregado:.0f} ciclos", help="Número de ciclos de fregado antes de que la película de pintura se rompa.")
-        st.metric(label="Viscosidad Final", value=f"{pred_viscosidad:.1f} KU", help="Viscosidad de la pintura en unidades Krebs (KU).")
+        st.metric(label="Viscosidad Final", value=f"{pred_viscosidad:.1f} KU", help="Viscosidad de la pintura en unidades Krebs (KU), que indica su fluidez.")
     
     with col_res2:
-        st.metric(label="Poder Cubriente", value=f"{pred_cubriente:.2f} m²/L", help="Área que puede cubrir un litro de pintura.")
-        st.metric(label="Brillo (60°)", value=f"{pred_brillo:.0f}", help="Medida del brillo de la superficie de la pintura a 60 grados.")
+        st.metric(label="Poder Cubriente", value=f"{pred_cubriente:.2f} m²/L", help="Área que puede cubrir un litro de pintura con una sola capa.")
+        st.metric(label="Brillo (60°)", value=f"{pred_brillo:.0f}", help="Medida del brillo de la superficie de la pintura a un ángulo de 60 grados.")
         
     with col_res3:
-        st.metric(label="Estabilidad", value=f"{pred_estabilidad:.0f} meses", help="Tiempo estimado en meses que la pintura mantiene sus propiedades.")
-        st.markdown("##### Color (Lab):")
-        st.markdown(f"**L:** `{pred_l:.2f}` (Luminosidad)")
-        st.markdown(f"**a:** `{pred_a:.2f}` (Eje rojo-verde)")
-        st.markdown(f"**b:** `{pred_b:.2f}` (Eje amarillo-azul)")
+        st.metric(label="Estabilidad", value=f"{pred_estabilidad:.0f} meses", help="Tiempo estimado en meses que la pintura mantiene sus propiedades óptimas antes de degradarse.")
+        st.markdown("##### Color (Lab):") # Encabezado para los valores de color Lab
+        st.markdown(f"**L:** `{pred_l:.2f}` (Luminosidad)") # Componente L: de negro (0) a blanco (100)
+        st.markdown(f"**a:** `{pred_a:.2f}` (Eje rojo-verde)") # Componente a: de verde (-) a rojo (+)
+        st.markdown(f"**b:** `{pred_b:.2f}` (Eje amarillo-azul)") # Componente b: de azul (-) a amarillo (+)
     
-    st.markdown("---")
+    st.markdown("---") # Separador visual
 
-    # Mostrar resultado de Clasificación
+    # Muestra el resultado de la clasificación del estado final con retroalimentación visual.
     if predicted_estado_final == 'Éxito':
         st.success(f"**Estado Final de la Pintura:** `{predicted_estado_final}` 🎉")
-        st.balloons() # Pequeña celebración para el éxito
+        st.balloons() # Pequeña animación de celebración para un resultado exitoso
     else:
         st.error(f"**Estado Final de la Pintura:** `{predicted_estado_final}` ❗")
-        st.warning("Esta formulación se clasifica como 'Falla'. Se recomienda revisar los componentes.")
+        st.warning("Esta formulación se clasifica como 'Falla'. Se recomienda revisar los componentes de la formulación.")
 
-    # Botones de Copy-to-Clipboard
-    st.markdown("---")
+    # --- Sección de Acciones Rápidas (Copiar a Portapapeles) ---
+    st.markdown("---") # Separador visual
     st.markdown("### Acciones Rápidas")
+    # Formatea los inputs actuales del usuario en un bloque de código para facilitar su copia y reutilización.
     copy_input_code = f"""
 Tipo de Pintura: '{tipo_pintura_input}'
 Pigmento Blanco (TiO2): {pigmento_blanco_tio2_input:.2f}
@@ -327,8 +376,8 @@ Agua: {agua_input:.2f}
 Proveedor Pigmento Blanco: '{proveedor_pigmento_blanco_input}'
     """
     st.code(copy_input_code, language='text')
-    st.info("Puedes copiar la formulación actual desde el cuadro de arriba para reutilizarla.")
+    st.info("Puedes copiar la formulación actual desde el cuadro de arriba para reutilizarla fácilmente.")
 
-# Pie de página o información adicional
+# Pie de página o información adicional del desarrollador.
 st.markdown("---")
 st.markdown("Desarrollado por Víctor 2025")
