@@ -62,7 +62,7 @@ def load_ml_assets():
                             local_dir=models_dir,
                             local_dir_use_symlinks=False # Importante para asegurar que se descargue el archivo real
                         )
-                        st.success(f"✔️ {filename} descargado.")
+                        st.print(f"[INFO] ✔️ {filename} descargado.")
                     except Exception as e:
                         st.error(f"❌ Error crítico: No se pudo descargar '{filename}' desde Hugging Face Hub. "
                                  f"Por favor, verifica que 'HF_REPO_ID' sea correcto ({HF_REPO_ID}), "
